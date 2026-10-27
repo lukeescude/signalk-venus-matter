@@ -50,7 +50,8 @@
     "displayName": "Matter Bridge for Victron Switching",
     "appIcon": "icon.png",
     "screenshots": [
-      "./screenshots/apple-home.jpg"
+      "./screenshots/apple-home.jpg",
+      "./screenshots/gx-switching.jpg"
     ]
   },
   "repository": {
