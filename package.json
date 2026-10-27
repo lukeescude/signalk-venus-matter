@@ -1,0 +1,81 @@
+{
+  "name": "signalk-venus-matter",
+  "version": "1.0.0",
+  "description": "Advertise Victron digital switching circuits (lights, dimmers, pumps) from a Cerbo GX as Matter devices so phones and tablets can control them natively.",
+  "main": "index.js",
+  "scripts": {
+    "release": "git tag -d v$npm_package_version; git tag v$npm_package_version && git push && git push origin v$npm_package_version",
+    "build:config": "webpack",
+    "prepublishOnly": "webpack",
+    "lint": "eslint .",
+    "lint:fix": "eslint --fix .",
+    "format": "eslint --fix . && prettier --write .",
+    "format:check": "eslint . && prettier --check .",
+    "test": "node --test",
+    "test:watch": "node --test --watch",
+    "prepare": "husky || true"
+  },
+  "files": [
+    "index.js",
+    "lib",
+    "public",
+    "CHANGELOG.md",
+    "screenshots",
+    "icon.png"
+  ],
+  "lint-staged": {
+    "*.js": "eslint --fix",
+    "*.{json,css,html}": "prettier --write"
+  },
+  "keywords": [
+    "signalk-node-server-plugin",
+    "signalk-plugin-configurator",
+    "signalk-category-hardware",
+    "signalk-category-utility",
+    "marine",
+    "matter",
+    "victron",
+    "digital-switching",
+    "homekit",
+    "cerbo-gx",
+    "venus-os"
+  ],
+  "author": "Luke Escude",
+  "license": "ISC",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=20.19.0 <21.0.0 || >=22.13.0"
+  },
+  "signalk": {
+    "displayName": "Matter Bridge for Victron Switching",
+    "appIcon": "icon.png",
+    "screenshots": [
+      "./screenshots/apple-home.jpg"
+    ]
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lukeescude/signalk-venus-matter.git"
+  },
+  "dependencies": {
+    "@matter/main": "^0.18.0",
+    "mqtt": "^5.16.1",
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.29.7",
+    "@babel/preset-react": "^7.29.7",
+    "@eslint/js": "^10.0.1",
+    "@stylistic/eslint-plugin": "^5.10.0",
+    "babel-loader": "^10.1.1",
+    "eslint": "^10.13.0",
+    "globals": "^17.13.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.6.0",
+    "prettier": "^3.9.10",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "webpack": "^5.112.2",
+    "webpack-cli": "^7.2.3"
+  }
+}

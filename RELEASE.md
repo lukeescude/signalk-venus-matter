@@ -1,0 +1,62 @@
+# Releasing
+
+Releases are automated. Pushing a `vX.Y.Z` tag triggers
+[`.github/workflows/publish.yml`](.github/workflows/publish.yml), which:
+
+1. extracts the matching `# vX.Y.Z` section from [CHANGELOG.md](CHANGELOG.md)
+   and creates a GitHub Release with those notes as the body, then
+2. publishes to npm using OIDC trusted publishing (with provenance).
+
+The Signal K appstore Changelog tab reads the GitHub Release notes, so the
+curated CHANGELOG.md section is what users see before installing.
+
+## One-time setup (npm trusted publishing)
+
+No `NPM_TOKEN` is stored. Instead, configure the package on npmjs.com once:
+
+- npm package **Settings → Trusted Publisher → GitHub Actions**
+- Repository: `lukeescude/signalk-venus-matter`
+- Workflow filename: `publish.yml`
+
+## Cutting a release
+
+### 1. Make sure `main` is clean and pulled, lint passes:
+
+```sh
+git status
+git pull
+npm run lint
+npm run format:check
+```
+
+### 2. Edit two files:
+
+- [package.json](package.json) — bump the `version` field
+- [CHANGELOG.md](CHANGELOG.md) — add a new `# vX.Y.Z (YYYY-MM-DD)` section at
+  the top matching the style of previous entries (the version part of the
+  heading must match the tag exactly, e.g. tag `v2.4.0` → heading starting
+  `# v2.4.0 (...)`; the publish workflow matches on that prefix)
+
+### 3. Commit:
+
+```sh
+git commit -am "release vX.Y.Z"
+```
+
+### 4. Tag and push:
+
+```sh
+npm run release
+```
+
+This pushes `main` and the `vX.Y.Z` tag. The publish workflow takes it from
+there — no `npm login` or local `npm publish` needed.
+
+### 5. Verify:
+
+- [GitHub Actions](https://github.com/lukeescude/signalk-venus-matter/actions) — the "Publish to npm" run is green
+- [GitHub Releases](https://github.com/lukeescude/signalk-venus-matter/releases) — the release shows your CHANGELOG notes
+- [npm](https://www.npmjs.com/package/signalk-venus-matter) — the new version is live
+
+Pre-release tags (`v2.4.0-beta.1`, `-alpha`, `-rc`) are marked as
+pre-releases on GitHub and published under the matching npm dist-tag.

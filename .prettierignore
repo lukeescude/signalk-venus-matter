@@ -1,0 +1,14 @@
+node_modules
+package-lock.json
+
+# JS is owned by ESLint / @stylistic
+*.js
+*.cjs
+*.mjs
+
+# Markdown
+*.md
+
+# React config panel source and its webpack output
+src
+public
