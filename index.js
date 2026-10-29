@@ -18,6 +18,17 @@ const {
   buildBridgedCircuits,
   buildCircuitReport,
 } = require('./lib/circuits');
+const {
+  SENSOR_KINDS,
+  SENSOR_KIND_NAMES,
+  parseSensorTopic,
+  createSensor,
+  applySensorField,
+  buildBridgedSensors,
+  buildSensorReport,
+  toSensorCacheEntry,
+  fromSensorCacheEntry,
+} = require('./lib/sensors');
 
 const PLUGIN_ID = 'signalk-venus-matter';
 const DEFAULT_PORT = 5540;
@@ -32,6 +43,11 @@ const DISCOVERY_SETTLE_MS = 3000;
 
 // How long a momentary output is held on when tapped in a Matter app.
 const MOMENTARY_PULSE_MS = 500;
+
+// Tank levels slosh around underway and temperature probes drift constantly.
+// Push at most one value change per sensor in this window (the latest value
+// wins), so the Matter fabric isn't flooded.
+const SENSOR_UPDATE_MIN_MS = 15000;
 
 // Matter forbids these setup passcodes (spec 5.1.7.1).
 const INVALID_PASSCODES = new Set([
@@ -96,11 +112,21 @@ function detectGxFromVenusPlugin(dataDir) {
 
 const IDENTITY_FILE = 'bridge-identity.json';
 const CIRCUIT_CACHE_FILE = 'bridged-circuits.json';
+const SENSOR_CACHE_FILE = 'bridged-sensors.json';
 
 function loadCircuitCache(dataDir) {
   try {
     const entries = JSON.parse(fs.readFileSync(path.join(dataDir, CIRCUIT_CACHE_FILE), 'utf8'));
     return Array.isArray(entries) ? entries.map(fromCacheEntry).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
+function loadSensorCache(dataDir) {
+  try {
+    const entries = JSON.parse(fs.readFileSync(path.join(dataDir, SENSOR_CACHE_FILE), 'utf8'));
+    return Array.isArray(entries) ? entries.map(fromSensorCacheEntry).filter(Boolean) : [];
   } catch {
     return [];
   }
@@ -150,10 +176,18 @@ module.exports = function (app) {
   // not (yet) reported by the GX
   const restored = new Map();
   let lastCacheJson = null;
+  // sensor id ("tank.20", "temperature.24") -> sensor model
+  const discoveredSensors = new Map();
+  // sensor id -> sensor restored from the cache and not (yet) reported by the GX
+  const restoredSensors = new Map();
+  // sensor id -> { at, timer } for rate-limiting value updates
+  const sensorPushes = new Map();
+  let lastSensorCacheJson = null;
 
   function saveCircuitCache() {
     if (!bridge) return;
-    const entries = [...bridge.endpoints.keys()]
+    const entries = bridge
+      .ids('circuit')
       .map((id) => {
         if (discovered.has(id)) return toCacheEntry(discovered.get(id), bankNames);
         const r = restored.get(id);
@@ -168,6 +202,24 @@ module.exports = function (app) {
       lastCacheJson = json;
     } catch (err) {
       app.error(`Failed to save bridged circuit cache: ${err.message}`);
+    }
+  }
+
+  function saveSensorCache() {
+    if (!bridge) return;
+    const entries = bridge
+      .ids(...SENSOR_KIND_NAMES)
+      .map((id) => discoveredSensors.get(id) || restoredSensors.get(id))
+      .filter(Boolean)
+      .map(toSensorCacheEntry)
+      .sort((a, b) => a.id.localeCompare(b.id));
+    const json = JSON.stringify(entries, null, 2);
+    if (json === lastSensorCacheJson) return;
+    try {
+      fs.writeFileSync(path.join(app.getDataDirPath(), SENSOR_CACHE_FILE), json);
+      lastSensorCacheJson = json;
+    } catch (err) {
+      app.error(`Failed to save bridged sensor cache: ${err.message}`);
     }
   }
 
@@ -193,31 +245,57 @@ module.exports = function (app) {
     if (circuits.length) app.debug(`Restored ${circuits.length} circuit(s) from the last session`);
   }
 
+  async function restoreCachedSensors(settings) {
+    const sensors = buildBridgedSensors(loadSensorCache(app.getDataDirPath()), settings, () => true);
+    for (const sensor of sensors) {
+      restoredSensors.set(sensor.id, sensor);
+      await bridge.addSensor(sensor, false);
+    }
+    if (sensors.length) app.debug(`Restored ${sensors.length} sensor(s) from the last session`);
+  }
+
   function isReachable(circuit) {
     if (!gxConnected || !circuit) return false;
     if (bankConnected[bankKeyOf(circuit)] === false) return false;
     return circuit.state !== null && circuit.state !== undefined;
   }
 
+  function isSensorReachable(sensor) {
+    if (!gxConnected || !sensor) return false;
+    if (sensor.connected === false) return false;
+    if (sensor.status !== undefined && sensor.status !== 0) return false;
+    return typeof sensor.value === 'number';
+  }
+
   function refreshReachability() {
     if (!bridge) return;
-    for (const id of bridge.endpoints.keys()) {
-      bridge.setReachable(id, isReachable(discovered.get(id))).catch((err) => {
+    for (const [id, { kind }] of bridge.endpoints) {
+      const reachable = kind === 'circuit' ? isReachable(discovered.get(id)) : isSensorReachable(discoveredSensors.get(id));
+      bridge.setReachable(id, reachable).catch((err) => {
         app.error(`Failed to update reachability of ${id}: ${err.message}`);
       });
     }
   }
 
+  function describeBridged() {
+    const counts = [`${bridge.ids('circuit').length} circuit(s)`];
+    const tanks = bridge.ids('tank').length;
+    const temperatures = bridge.ids('temperature').length;
+    if (tanks) counts.push(`${tanks} tank(s)`);
+    if (temperatures) counts.push(`${temperatures} temperature sensor(s)`);
+    return counts.length > 1 ? `${counts.slice(0, -1).join(', ')} and ${counts[counts.length - 1]}` : counts[0];
+  }
+
   function updateStatus() {
     if (!bridge) return;
-    const count = bridge.endpoints.size;
+    const count = describeBridged();
     const gx = gxConnected ? '' : ' — GX not connected';
     if (bridge.isCommissioned) {
-      app.setPluginStatus(`Paired — bridging ${count} circuit(s)${gx}`);
+      app.setPluginStatus(`Paired — bridging ${count}${gx}`);
     } else {
       const codes = bridge.pairingCodes;
       app.setPluginStatus(
-        `Waiting to be paired — bridging ${count} circuit(s). Pairing code: ${codes ? codes.manualPairingCode : '?'}${gx}`,
+        `Waiting to be paired — bridging ${count}. Pairing code: ${codes ? codes.manualPairingCode : '?'}${gx}`,
       );
     }
   }
@@ -243,7 +321,7 @@ module.exports = function (app) {
     const desiredIds = new Set(desired.map((c) => c.id));
     const overrides = new Map((settings.circuits || []).filter((c) => c && c.id).map((c) => [c.id, c]));
 
-    for (const id of [...bridge.endpoints.keys()]) {
+    for (const id of bridge.ids('circuit')) {
       if (desiredIds.has(id)) continue;
       if (!discovered.has(id)) {
         // Restored from the cache but not reported by the GX (module offline,
@@ -269,10 +347,89 @@ module.exports = function (app) {
     }
     for (const id of desiredIds) restored.delete(id);
     saveCircuitCache();
+    await syncSensors(settings);
     updateStatus();
   }
 
+  // Same as syncEndpoints, for sensors. A sensor's device type never changes,
+  // so it is only ever added, removed, or renamed. Restored sensors the GX
+  // hasn't reported are included, so they stay (unreachable) unless turned off
+  // and are counted when telling same-named sensors apart.
+  async function syncSensors(settings) {
+    const known = [
+      ...discoveredSensors.values(),
+      ...[...restoredSensors.values()].filter((s) => !discoveredSensors.has(s.id)),
+    ];
+    const desired = buildBridgedSensors(known, settings, (id) => bridge.has(id));
+    const desiredIds = new Set(desired.map((s) => s.id));
+
+    for (const id of bridge.ids(...SENSOR_KIND_NAMES)) {
+      if (desiredIds.has(id)) continue;
+      app.debug(`Removing ${id} from the bridge`);
+      await bridge.removeCircuit(id);
+      restoredSensors.delete(id);
+    }
+    for (const sensor of desired) {
+      if (bridge.has(sensor.id)) {
+        await bridge.updateLabel(sensor.id, sensor.label);
+      } else {
+        await bridge.addSensor(sensor, isSensorReachable(sensor));
+      }
+      if (discoveredSensors.has(sensor.id)) restoredSensors.delete(sensor.id);
+    }
+    saveSensorCache();
+  }
+
+  function pushSensorValue(id) {
+    const push = sensorPushes.get(id) || { at: 0, timer: null };
+    sensorPushes.set(id, push);
+    if (push.timer) return; // a trailing update is already scheduled
+    const send = () => {
+      push.timer = null;
+      push.at = Date.now();
+      const sensor = discoveredSensors.get(id);
+      if (!bridge || !sensor || typeof sensor.value !== 'number') return;
+      bridge.updateSensor(id, sensor.value).catch((err) => {
+        app.error(`Failed to update Matter endpoint ${id}: ${err.message}`);
+      });
+    };
+    const wait = push.at + SENSOR_UPDATE_MIN_MS - Date.now();
+    if (wait <= 0) send();
+    else push.timer = setTimeout(send, wait);
+  }
+
+  function handleSensorValue(settings, parsed, value) {
+    let sensor = discoveredSensors.get(parsed.id);
+    if (!sensor) {
+      sensor = createSensor(parsed);
+      discoveredSensors.set(parsed.id, sensor);
+      app.debug(`Discovered ${parsed.kind} sensor ${parsed.id}`);
+    }
+    const { valueField, typeField } = SENSOR_KINDS[parsed.kind];
+    const hadValue = typeof sensor.value === 'number';
+    const valueChanged = applySensorField(sensor, parsed.field, value);
+    const bridged = bridge && bridge.has(parsed.id);
+    if (bridged) {
+      if (valueChanged) pushSensorValue(parsed.id);
+      if ([valueField, 'Status', 'Connected'].includes(parsed.field)) {
+        bridge.setReachable(parsed.id, isSensorReachable(sensor)).catch(() => {});
+      }
+    }
+    // Only a label change or a sensor's first reading needs a sync. Value
+    // updates must not trigger it, or they'd keep pushing the debounce back.
+    const firstValue = !bridged && !hadValue && typeof sensor.value === 'number';
+    if (parsed.field === 'CustomName' || parsed.field === typeField || firstValue) {
+      scheduleSync(settings);
+    }
+  }
+
   function handleVenusValue(settings, topic, value) {
+    const sensor = parseSensorTopic(topic);
+    if (sensor) {
+      handleSensorValue(settings, sensor, value);
+      return;
+    }
+
     const bank = parseBankTopic(topic);
     if (bank) {
       if (bank.field === 'CustomName') {
@@ -412,6 +569,11 @@ module.exports = function (app) {
     } catch (err) {
       app.error(`Failed to restore cached circuits: ${err.message}`);
     }
+    try {
+      await restoreCachedSensors(settings);
+    } catch (err) {
+      app.error(`Failed to restore cached sensors: ${err.message}`);
+    }
     updateStatus();
 
     const { VenusClient } = require('./lib/venus-client');
@@ -444,6 +606,8 @@ module.exports = function (app) {
     clearTimeout(settleTimer);
     for (const t of momentaryTimers.values()) clearTimeout(t);
     momentaryTimers.clear();
+    for (const { timer } of sensorPushes.values()) clearTimeout(timer);
+    sensorPushes.clear();
     gxConnected = false;
     gxHostSource = null;
     if (venus) {
@@ -454,6 +618,9 @@ module.exports = function (app) {
     discovered.clear();
     restored.clear();
     lastCacheJson = null;
+    discoveredSensors.clear();
+    restoredSensors.clear();
+    lastSensorCacheJson = null;
     for (const key of Object.keys(bankNames)) delete bankNames[key];
     for (const key of Object.keys(bankConnected)) delete bankConnected[key];
     if (bridge) {
@@ -505,6 +672,14 @@ module.exports = function (app) {
                 };
               }),
           ),
+        sensors: buildSensorReport(
+          [
+            ...discoveredSensors.values(),
+            ...[...restoredSensors.values()].filter((s) => !discoveredSensors.has(s.id)),
+          ],
+          settings,
+          (id) => Boolean(bridge && bridge.has(id)),
+        ).map((s) => (discoveredSensors.has(s.id) ? s : { ...s, skipReason: null, missing: true })),
       });
     });
 
@@ -521,6 +696,7 @@ module.exports = function (app) {
         fs.rmSync(path.join(dataDir, MATTER_STORAGE_DIR), { recursive: true, force: true });
         fs.rmSync(path.join(dataDir, IDENTITY_FILE), { force: true });
         fs.rmSync(path.join(dataDir, CIRCUIT_CACHE_FILE), { force: true });
+        fs.rmSync(path.join(dataDir, SENSOR_CACHE_FILE), { force: true });
         if (wasRunning) await plugin.start(settings);
         res.json({ ok: true });
       } catch (err) {
@@ -593,6 +769,34 @@ module.exports = function (app) {
           },
         },
       },
+      tanks: {
+        type: 'array',
+        title: 'Tank overrides',
+        description: 'Per-tank settings, edited in the plugin configuration panel.',
+        items: {
+          type: 'object',
+          required: ['id'],
+          properties: {
+            id: { type: 'string', title: 'Tank id (e.g. "tank.20")' },
+            name: { type: 'string', title: 'Display name' },
+            enabled: { type: 'boolean', title: 'Expose to Matter', default: true },
+          },
+        },
+      },
+      temperatures: {
+        type: 'array',
+        title: 'Temperature sensor overrides',
+        description: 'Per-sensor settings, edited in the plugin configuration panel.',
+        items: {
+          type: 'object',
+          required: ['id'],
+          properties: {
+            id: { type: 'string', title: 'Sensor id (e.g. "temperature.24")' },
+            name: { type: 'string', title: 'Display name' },
+            enabled: { type: 'boolean', title: 'Expose to Matter', default: true },
+          },
+        },
+      },
     },
   });
 
@@ -603,6 +807,7 @@ module.exports.internal = {
   describeFabric,
   detectGxFromVenusPlugin,
   loadCircuitCache,
+  loadSensorCache,
   isValidPasscode,
   randomPasscode,
   loadOrCreateIdentity,

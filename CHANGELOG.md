@@ -1,3 +1,12 @@
+# v1.1.0 (2026-10-29)
+
+- Tank senders on the GX (fresh water, black water, diesel, and so on) are exposed as read-only Matter sensors. Matter has no tank device type, so each tank appears as a humidity sensor whose humidity is the tank level in percent
+- Temperature sensors on the GX (fridges, freezers, engine room, outdoor, and so on) are exposed as Matter temperature sensors
+- Sensors use the names set on the GX. Without one, they're named after their type ("Black water tank", "Freezer"), with the GX instance number added when several share a type ("Fridge 24", "Fridge 25")
+- New **Tanks** and **Temperatures** sections in the configuration panel show each sensor's current reading (and remaining volume for tanks), with renaming and **Show in Matter**
+- Sensors show as "No Response" while offline or reporting a fault, and are remembered across restarts like circuits
+- Readings are rounded (whole percent, 0.1 °C) and sent at most every 15 seconds per sensor, so sloshing tanks and drifting probes don't flood Home apps
+
 # v1.0.1 (2026-10-29)
 
 - New README and Signal K appstore screenshot showing GX circuits side by side with how they appear in Apple Home on iPhone

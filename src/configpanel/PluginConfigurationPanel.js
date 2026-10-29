@@ -152,6 +152,16 @@ function overrideFor(id, o) {
   return Object.keys(entry).length > 1 ? entry : null
 }
 
+// Plugin config array holding each sensor kind's overrides.
+const SENSOR_SETTINGS_KEYS = { tank: 'tanks', temperature: 'temperatures' }
+
+function sensorOverrideFor(id, o) {
+  const entry = { id }
+  if (o.name && o.name.trim()) entry.name = o.name.trim()
+  if (o.enabled === false) entry.enabled = false
+  return Object.keys(entry).length > 1 ? entry : null
+}
+
 // Two-step "Reset pairing" button: the first click arms it, the second resets.
 // Avoids a browser confirm() dialog inside the admin UI.
 function ResetPairingButton({ onReset }) {
@@ -317,6 +327,71 @@ function CircuitRow({ circuit, override, onChange }) {
   )
 }
 
+function formatSensorValue(sensor) {
+  if (sensor.value === null) return ''
+  if (sensor.kind === 'tank') return ` · ${Math.round(sensor.value)}%`
+  return ` · ${sensor.value.toFixed(1)} °C (${((sensor.value * 9) / 5 + 32).toFixed(1)} °F)`
+}
+
+function SensorRow({ sensor, override, onChange }) {
+  const enabled = override.enabled !== false
+  const problems = [
+    ...(sensor.missing ? ['Not reported by the GX (sensor offline or removed). Untick to remove it'] : []),
+    ...(sensor.fault ? [sensor.fault] : [])
+  ]
+  const volume =
+    sensor.remainingLitres !== null && sensor.capacityLitres
+      ? ` · ${sensor.remainingLitres} of ${sensor.capacityLitres} L`
+      : ''
+  return (
+    <div style={{ ...S.item, ...(enabled ? {} : S.itemDisabled) }}>
+      <div style={S.itemName}>
+        <input
+          style={S.itemInput}
+          value={override.name}
+          placeholder={sensor.autoLabel}
+          onChange={(e) => onChange({ name: e.target.value })}
+        />
+        <span style={S.hint}>
+          {sensor.typeName || `Instance ${sensor.instance}`}
+          {formatSensorValue(sensor)}
+          {volume}
+          {sensor.productName ? ` · ${sensor.productName}` : ''}
+          {sensor.skipReason ? ` · ${sensor.skipReason}` : ''}
+          {problems.length > 0 && <span style={{ color: '#ef4444' }}> · {problems.join(', ')}</span>}
+        </span>
+      </div>
+      <label style={S.toggle}>
+        <input
+          style={S.checkbox}
+          type="checkbox"
+          checked={enabled}
+          onChange={(e) => onChange({ enabled: e.target.checked })}
+        />
+        Show in Matter
+      </label>
+    </div>
+  )
+}
+
+function SensorSection({ title, sensors, empty, hint, getOverride, onChange }) {
+  return (
+    <>
+      <div style={S.sectionTitle}>{title}</div>
+      {sensors.length === 0 ? (
+        <div style={S.empty}>{empty}</div>
+      ) : (
+        <>
+          {hint && <div style={{ ...S.hint, marginBottom: 8 }}>{hint}</div>}
+          {sensors.map((s) => (
+            <SensorRow key={s.id} sensor={s} override={getOverride(s)} onChange={(patch) => onChange(s, patch)} />
+          ))}
+        </>
+      )}
+    </>
+  )
+}
+
 export default function PluginConfigurationPanel({ configuration, save }) {
   const cfg = configuration || {}
   const [gxHost, setGxHost] = useState(cfg.gxHost || '')
@@ -336,6 +411,16 @@ export default function PluginConfigurationPanel({ configuration, save }) {
           deviceType: c.deviceType || 'auto',
           enabled: typeof c.enabled === 'boolean' ? c.enabled : undefined
         }
+      }
+    }
+    return map
+  })
+  // sensor id -> { name, enabled }, for tanks and temperature sensors
+  const [sensorOverrides, setSensorOverrides] = useState(() => {
+    const map = {}
+    for (const key of Object.values(SENSOR_SETTINGS_KEYS)) {
+      for (const o of cfg[key] || []) {
+        if (o && o.id) map[o.id] = { name: o.name || '', enabled: o.enabled !== false }
       }
     }
     return map
@@ -382,6 +467,11 @@ export default function PluginConfigurationPanel({ configuration, save }) {
   const updateOverride = (c, patch) =>
     setOverrides({ ...overrides, [c.id]: { ...getOverride(c), ...patch } })
 
+  const sensors = (bridgeStatus && bridgeStatus.sensors) || []
+  const getSensorOverride = (s) => sensorOverrides[s.id] || { name: '', enabled: true }
+  const updateSensorOverride = (s, patch) =>
+    setSensorOverrides({ ...sensorOverrides, [s.id]: { ...getSensorOverride(s), ...patch } })
+
   const banks = []
   for (const c of circuits) {
     let bank = banks.find((b) => b.name === c.bank)
@@ -409,6 +499,13 @@ export default function PluginConfigurationPanel({ configuration, save }) {
           .map(([id, o]) => overrideFor(id, o))
           .filter(Boolean)
       }
+      // Sensor ids start with their kind ("tank.20", "temperature.24").
+      for (const [kind, key] of Object.entries(SENSOR_SETTINGS_KEYS)) {
+        config[key] = Object.entries(sensorOverrides)
+          .filter(([id]) => id.startsWith(`${kind}.`))
+          .map(([id, o]) => sensorOverrideFor(id, o))
+          .filter(Boolean)
+      }
       const result = save(config)
       if (result && typeof result.then === 'function') {
         await result
@@ -422,7 +519,7 @@ export default function PluginConfigurationPanel({ configuration, save }) {
     } finally {
       setSaving(false)
     }
-  }, [cfg, save, gxHost, gxPort, gxTls, gxUsername, gxPassword, bridgeName, port, overrides])
+  }, [cfg, save, gxHost, gxPort, gxTls, gxUsername, gxPassword, bridgeName, port, overrides, sensorOverrides])
 
   const gxConnected = bridgeStatus && bridgeStatus.gxConnected
 
@@ -483,6 +580,23 @@ export default function PluginConfigurationPanel({ configuration, save }) {
           </div>
         ))
       )}
+
+      <SensorSection
+        title="Tanks"
+        sensors={sensors.filter((s) => s.kind === 'tank')}
+        empty="No tank senders reported by the GX."
+        hint="Matter has no tank sensor, so each tank shows up as a humidity sensor whose humidity is the tank level. In Apple Home, put tanks in a room of their own so they don't skew that room's humidity."
+        getOverride={getSensorOverride}
+        onChange={updateSensorOverride}
+      />
+      <SensorSection
+        title="Temperatures"
+        sensors={sensors.filter((s) => s.kind === 'temperature')}
+        empty="No temperature sensors reported by the GX."
+        hint="Shown as temperature sensors. Home apps display them in the unit set on your phone."
+        getOverride={getSensorOverride}
+        onChange={updateSensorOverride}
+      />
 
       <div style={S.actions}>
         <button style={{ ...S.btn, ...S.btnSave, ...(saving ? { opacity: 0.6 } : {}) }} onClick={doSave} disabled={saving}>

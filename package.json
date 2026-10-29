@@ -1,6 +1,6 @@
 {
   "name": "signalk-venus-matter",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "Advertise Victron digital switching circuits (lights, dimmers, pumps) from a Cerbo GX as Matter devices so phones and tablets can control them natively.",
   "main": "index.js",
   "scripts": {

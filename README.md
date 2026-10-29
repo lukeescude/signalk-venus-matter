@@ -15,7 +15,9 @@ A Signal K plugin that advertises Victron digital switching circuits (lights, di
    - outputs hidden in the Victron UI, and other types (sliders, dropdowns, etc.), are skipped
 3. Keeps state in sync both ways. Changes on the GX show up in the Home app, and changes in the Home app are written straight to the GX
 4. Uses the names you've set on the GX, and keeps working if you rename a circuit
-5. Follows changes on the GX live. A circuit you hide or retype on the GX is removed or rebuilt. A circuit on a switching module that goes offline shows as "No Response" until the module is back
+5. Exposes the GX's **tank** senders (fresh water, black water, diesel, ...) as read-only sensors. Matter has no tank device type, so each tank appears as a **humidity sensor** whose humidity is the tank level in percent. Put the tanks in a room of their own in Apple Home, because it averages a room's humidity sensors into the room summary
+6. Exposes the GX's **temperature** sensors (fridges, freezers, engine room, outdoor, ...) as Matter temperature sensors. Home apps show them in the unit set on your phone
+7. Follows changes on the GX live. A circuit you hide or retype on the GX is removed or rebuilt. A circuit on a switching module that goes offline shows as "No Response" until the module is back
 
 ## Requirements
 
@@ -47,7 +49,8 @@ Open **Server → Plugin Config → Matter Bridge for Victron Switching**. The p
    - turn it on or off in Matter with **Show in Matter** (momentary outputs start turned off).
 
    Faults reported by the GX (tripped, over temperature, short circuit) and offline modules are shown in red. Outputs that can't be bridged, such as hidden ones, are shown greyed out with the reason.
-4. **Matter Bridge:** the bridge name shown while pairing, and the Matter port (default `5540`).
+4. **Tanks** and **Temperatures:** every tank sender and temperature sensor on the GX is listed with its type and current reading (plus the remaining volume for tanks). You can rename one or turn it off with **Show in Matter**. Sensors without a custom name on the GX are named after their type, e.g. "Black water tank" or "Freezer". When several share a type, the GX instance number is added ("Fridge 24", "Fridge 25"), so it's worth naming them on the GX or here.
+5. **Matter Bridge:** the bridge name shown while pairing, and the Matter port (default `5540`).
 
 Click **Save Configuration** to apply. The plugin restarts, and paired apps keep working.
 
