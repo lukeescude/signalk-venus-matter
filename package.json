@@ -1,6 +1,6 @@
 {
   "name": "signalk-venus-matter",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Advertise Victron digital switching circuits (lights, dimmers, pumps) from a Cerbo GX as Matter devices so phones and tablets can control them natively.",
   "main": "index.js",
   "scripts": {
@@ -50,8 +50,7 @@
     "displayName": "Matter Bridge for Victron Switching",
     "appIcon": "icon.png",
     "screenshots": [
-      "./screenshots/apple-home.jpg",
-      "./screenshots/gx-switching.jpg"
+      "./screenshots/gx-to-apple-home.jpg"
     ]
   },
   "repository": {

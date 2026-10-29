@@ -1,3 +1,7 @@
+# v1.0.1 (2026-10-29)
+
+- New README and Signal K appstore screenshot showing GX circuits side by side with how they appear in Apple Home on iPhone
+
 # v1.0.0 (2026-10-27)
 
 First public release.

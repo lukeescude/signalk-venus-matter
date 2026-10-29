@@ -2,8 +2,7 @@
 
 A Signal K plugin that advertises Victron digital switching circuits (lights, dimmers, pumps, and so on) as **Matter** devices on your boat's network. iPhones, iPads, and Android devices can then control them natively from Apple Home, Google Home, or any other Matter controller.
 
-![Victron switching on the GX Touch](screenshots/gx-switching.jpg)
-![Victron circuits in Apple Home](screenshots/apple-home.jpg)
+![Victron circuits on the GX Touch, as they appear in Apple Home on iPhone](screenshots/gx-to-apple-home.jpg)
 
 ## What it does
 
